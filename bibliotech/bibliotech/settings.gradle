@@ -1,0 +1,4 @@
+rootProject.name = 'bibliotech'
+
+// If this is a multi-module project, you can include modules here, e.g.:
+// include 'module-name'

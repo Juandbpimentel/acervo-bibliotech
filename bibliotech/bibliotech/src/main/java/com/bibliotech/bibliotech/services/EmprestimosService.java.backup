@@ -2,15 +2,21 @@ package com.bibliotech.bibliotech.services;
 
 import com.bibliotech.bibliotech.dtos.request.EmprestimoRequestDTO;
 import com.bibliotech.bibliotech.dtos.request.EmprestimoRequestDTOConcluir;
+import com.bibliotech.bibliotech.dtos.request.mappers.EmprestimoRequestMapper;
 import com.bibliotech.bibliotech.dtos.response.EmprestimoNotificacaoDTO;
 import com.bibliotech.bibliotech.dtos.response.EmprestimoResponseDTO;
 import com.bibliotech.bibliotech.dtos.response.EmprestimoResponseDTOAluno;
 import com.bibliotech.bibliotech.dtos.response.EmprestimoResponseDTOLivro;
 import com.bibliotech.bibliotech.dtos.response.mappers.EmprestimoResponseMapper;
-import com.bibliotech.bibliotech.facades.EmprestimoFacade;
+import com.bibliotech.bibliotech.exception.NotFoundException;
+import com.bibliotech.bibliotech.exception.ValidationException;
+import com.bibliotech.bibliotech.models.Aluno;
 import com.bibliotech.bibliotech.models.Emprestimo;
-import com.bibliotech.bibliotech.repositories.EmprestimoRepository;
+import com.bibliotech.bibliotech.models.Exemplar;
+import com.bibliotech.bibliotech.models.Usuario;
+import com.bibliotech.bibliotech.repositories.*;
 import com.bibliotech.bibliotech.specifications.EmprestimoSpecification;
+import com.bibliotech.bibliotech.strategies.notifications.EmailNotificationStrategy;
 import com.bibliotech.bibliotech.utils.EmailSend;
 import com.bibliotech.bibliotech.utils.FormatarData;
 import jakarta.transaction.Transactional;
@@ -22,61 +28,178 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Serviço de Empréstimos refatorado usando o padrão Facade.
- * O Facade encapsula as operações complexas, reduzindo acoplamento.
- */
 @Service
 public class EmprestimosService {
 
-    private final EmprestimoFacade emprestimoFacade;
+    private final TokenService tokenService;
     private final EmprestimoRepository emprestimoRepository;
+    private final EmprestimoRequestMapper emprestimoRequestMapper;
     private final EmprestimoResponseMapper emprestimoResponseMapper;
     private final EmprestimoSpecification emprestimoSpecification;
+    private final AlunoRepository alunoRepository;
+    private final ExemplarRepository exemplarRepository;
+    private final UsuarioRepository usuarioRepository;
     private final EmailSend emailSend;
     private final NotificationService notificationService;
 
     @Autowired
     public EmprestimosService(
-            EmprestimoFacade emprestimoFacade,
+            TokenService tokenService,
             EmprestimoRepository emprestimoRepository,
+            EmprestimoRequestMapper emprestimoRequestMapper,
             EmprestimoResponseMapper emprestimoResponseMapper,
             EmprestimoSpecification emprestimoSpecification,
+            AlunoRepository alunoRepository,
+            ExemplarRepository exemplarRepository,
+            UsuarioRepository usuarioRepository,
             EmailSend emailSend,
-            NotificationService notificationService) {
-        this.emprestimoFacade = emprestimoFacade;
+            EmailNotificationStrategy emailNotificationStrategy
+            ) {
+        this.tokenService = tokenService;
         this.emprestimoRepository = emprestimoRepository;
+        this.emprestimoRequestMapper = emprestimoRequestMapper;
         this.emprestimoResponseMapper = emprestimoResponseMapper;
         this.emprestimoSpecification = emprestimoSpecification;
+        this.alunoRepository = alunoRepository;
+        this.exemplarRepository = exemplarRepository;
+        this.usuarioRepository = usuarioRepository;
         this.emailSend = emailSend;
-        this.notificationService = notificationService;
+        this.notificationService = new NotificationService(emailNotificationStrategy);
     }
-
-    // Métodos principais delegados ao Facade
 
     @Transactional
     public EmprestimoResponseDTO realizarEmprestimo(EmprestimoRequestDTO requestDTO) {
-        return emprestimoFacade.realizarEmprestimo(requestDTO);
+        if (requestDTO.getIdAluno() == null) {
+            throw new ValidationException("O ID do aluno não pode ser nulo.");
+        }
+        if (requestDTO.getIdExemplar() == null) {
+            throw new ValidationException("O ID do exemplar não pode ser nulo.");
+        }
+
+        Aluno aluno = alunoRepository.findById(requestDTO.getIdAluno())
+                .orElseThrow(() -> new NotFoundException("Aluno não encontrado"));
+
+        if (!aluno.getSituacao().equals("regular")) {
+            throw new ValidationException("O aluno não está com a situação regular");
+        }
+
+        Exemplar exemplar = exemplarRepository.findById(requestDTO.getIdExemplar())
+                .orElseThrow(() -> new NotFoundException("Exemplar não encontrado"));
+
+        if (!exemplar.getSituacao().equals("disponivel")) {
+            throw new ValidationException("O exemplar não está disponível");
+        }
+
+        Usuario usuario = usuarioRepository.findById(tokenService.getUsuarioId())
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado"));
+
+        Emprestimo emprestimo = emprestimoRequestMapper.toEntity(requestDTO);
+
+        emprestimo.setAluno(aluno);
+        emprestimo.setExemplar(exemplar);
+        emprestimo.setRealizadoPor(usuario);
+        emprestimo.setSituacao("pendente");
+
+        aluno.setSituacao("debito");
+        exemplar.setSituacao("emprestado");
+
+        Emprestimo emprestimoSalvo = emprestimoRepository.save(emprestimo);
+
+        return emprestimoResponseMapper.toDto(emprestimoSalvo);
     }
 
-    public String cancelarEmprestimo(Integer id) {
-        return emprestimoFacade.cancelarEmprestimo(id);
+    public String cancelarEmprestimo(Integer id){
+        Emprestimo emprestimo = emprestimoRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Emprestimo com o ID " + id + " não encontrado."));
+
+        Usuario usuario = usuarioRepository.findById(tokenService.getUsuarioId())
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado"));
+
+        if (emprestimo.getSituacao().equals("cancelado")){
+            throw new ValidationException("Emprestimo ja cancelado.");
+        }
+
+        emprestimo.setSituacao("cancelado");
+        emprestimo.getAluno().setSituacao("regular");
+        emprestimo.getExemplar().setSituacao("disponivel");
+
+        emprestimo.setConcluidoPor(usuario);
+
+        emprestimo.setDataConclusao(LocalDate.now());
+
+        emprestimoRepository.save(emprestimo);
+
+        return "Emprestimo cancelado com sucesso.";
     }
 
     @Transactional
-    public String concluirEmprestimo(Integer id, EmprestimoRequestDTOConcluir DTOConcluir) {
-        return emprestimoFacade.concluirEmprestimo(id, DTOConcluir);
+    public String concluirEmprestimo(Integer id, EmprestimoRequestDTOConcluir DTOConcluir){
+        Emprestimo emprestimo = emprestimoRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Emprestimo com o ID " + id + " não encontrado."));
+
+        Usuario usuario = usuarioRepository.findById(tokenService.getUsuarioId())
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado"));
+
+        if (emprestimo.getSituacao().equals("cancelado") || emprestimo.getSituacao().equals("entregue") || emprestimo.getSituacao().equals("extraviado")){
+            throw new ValidationException("Emprestimo ja concluido.");
+        }
+
+        emprestimo.setObservacao(DTOConcluir.getObservacao());
+        emprestimo.setDataConclusao(LocalDate.now());
+
+        emprestimo.setConcluidoPor(usuario);
+
+        if (!DTOConcluir.isExtraviado()){
+            emprestimo.setSituacao("entregue");
+            emprestimo.getAluno().setSituacao("regular");
+            emprestimo.getExemplar().setSituacao("disponivel");
+        }else {
+            emprestimo.setSituacao("extraviado");
+            emprestimo.getAluno().setSituacao("irregular");
+            emprestimo.getExemplar().setSituacao("extraviado");
+        }
+
+        emprestimoRepository.save(emprestimo);
+
+        return DTOConcluir.isExtraviado() ? "Emprestimo extraviado com sucesso." : "Emprestimo concluido com sucesso.";
     }
 
     @Transactional
-    public String renovarPrazo(Integer id) {
-        return emprestimoFacade.renovarPrazo(id);
-    }
+    public String renovarPrazo(Integer id){
+        Emprestimo emprestimo = emprestimoRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Emprestimo com o ID " + id + " não encontrado."));
 
-    // Métodos de consulta permanecem no service
+        if (emprestimo.getSituacao().equals("cancelado") || emprestimo.getSituacao().equals("entregue") || emprestimo.getSituacao().equals("extraviado")){
+            throw new ValidationException("Emprestimo ja concluido.");
+        }
+
+        if (ChronoUnit.DAYS.between(emprestimo.getDataEmprestimo(), LocalDate.now()) > 30) {
+            throw new ValidationException("Renovação não permitida. O prazo máximo para renovação foi excedido.");
+        }
+
+
+        if (emprestimo.getQtdRenovacao() >= 3){
+            throw new ValidationException("Renovação não permitida. O número máximo de renovações foi atingido.");
+        }
+
+        if (emprestimo.getSituacao().equals("atrasado")){
+            emprestimo.setDataPrazo(LocalDate.now().plusDays(7));
+            emprestimo.setSituacao("pendente");
+        }
+        else {
+            emprestimo.setDataPrazo(emprestimo.getDataPrazo().plusDays(7));
+        }
+
+        emprestimo.setQtdRenovacao(emprestimo.getQtdRenovacao() + 1);
+
+        emprestimoRepository.save(emprestimo);
+
+        return "Prazo renovado com sucesso.";
+    }
 
     public Page<EmprestimoResponseDTO> consultarEmprestimos(
             String nomeAluno, String tituloLivro, String isbn, String situacao,
