@@ -16,6 +16,7 @@ import com.bibliotech.bibliotech.utils.FormatarData;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -95,7 +96,11 @@ public class EmprestimosService {
 
         Page<Emprestimo> emprestimos = emprestimoRepository.findAll(spec, sortedPageable);
 
-        return emprestimos.map(emprestimoResponseMapper::toDto);
+        List<EmprestimoResponseDTO> dtoList = emprestimos.stream()
+                .map(emprestimoResponseMapper::toDto)
+                .toList();
+
+        return new PageImpl<>(dtoList, sortedPageable, emprestimos.getTotalElements());
     }
 
     public Page<EmprestimoResponseDTOAluno> consultarEmprestimosPorAlunoEPeriodo(
@@ -115,8 +120,10 @@ public class EmprestimosService {
         } else {
             emprestimos = emprestimoRepository.findByAlunoId(idAluno, sortedPageable);
         }
-
-        return emprestimos.map(emprestimoResponseMapper::toDTOAluno);
+        List<EmprestimoResponseDTOAluno> dtoList = emprestimos.stream()
+                .map(emprestimoResponseMapper::toDTOAluno)
+                .toList();
+        return dtoList.isEmpty() ? Page.empty() : new PageImpl<>(dtoList, sortedPageable, emprestimos.getTotalElements());
     }
 
     public Page<EmprestimoResponseDTOLivro> consultarEmprestimosPorLivroEPeriodo(
@@ -137,7 +144,10 @@ public class EmprestimosService {
             emprestimos = emprestimoRepository.findByExemplar_LivroId(idLivro, sortedPageable);
         }
 
-        return emprestimos.map(emprestimoResponseMapper::toDTOLivro);
+        List<EmprestimoResponseDTOLivro> dtoList = emprestimos.stream()
+                .map(emprestimoResponseMapper::toDTOLivro)
+                .toList();
+        return dtoList.isEmpty() ? Page.empty() : new PageImpl<>(dtoList, sortedPageable, emprestimos.getTotalElements());
     }
 
     public List<EmprestimoNotificacaoDTO> enviarEmailAtrasadosEPresteAAtrasar() {

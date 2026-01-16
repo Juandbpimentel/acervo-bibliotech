@@ -77,7 +77,7 @@ public class SecurityConfigurations {
                         .requestMatchers(HttpMethod.DELETE, "/generos/sem-associacao").permitAll()
 
                         .requestMatchers(HttpMethod.POST, "/ocorrencias").hasAnyRole("bibliotecario", "aluno_monitor")
-                        .requestMatchers(HttpMethod.POST, "/ocorrencias/export/pdf").hasRole("bibliotecario")
+                        .requestMatchers(HttpMethod.GET, "/ocorrencias/export/pdf").hasRole("bibliotecario")
                         .requestMatchers(HttpMethod.GET, "/ocorrencias").hasAnyRole("bibliotecario", "aluno_monitor")
                         .requestMatchers(HttpMethod.DELETE, "/ocorrencias/{id}").hasRole("bibliotecario")
 

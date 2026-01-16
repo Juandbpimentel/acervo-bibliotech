@@ -18,6 +18,7 @@ import com.bibliotech.bibliotech.services.PdfExportService;
 import com.lowagie.text.DocumentException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpHeaders;
@@ -73,9 +74,11 @@ public class LivrosController {
             @RequestParam(value = "ativo", required = false) Boolean ativo,
             @PageableDefault(page = 0, size = 10) Pageable pageable) {
 
-        Page<Livro> livros = livrosService.getLivros(titulo, isbn, autor, genero, ativo, pageable);
+        Iterable<Livro> livros = livrosService.getLivros(titulo, isbn, autor, genero, ativo, pageable);
 
-        Page<LivroResponseGetDTO> livroResponseGetDTO = livros.map(livroResponseGetMapper::toDTO);
+        List<LivroResponseGetDTO> livroResponseGetDTOList = new ArrayList<>();
+        livros.forEach(l -> livroResponseGetDTOList.add(livroResponseGetMapper.toDTO(l)));
+        Page<LivroResponseGetDTO> livroResponseGetDTO = new PageImpl<>(livroResponseGetDTOList, pageable, livroResponseGetDTOList.size());
 
         return ResponseEntity.ok(livroResponseGetDTO);
     }
